@@ -14,9 +14,9 @@ FP16_INFERENCE = True
 image_source, image = load_image(IMAGE_PATH)
 model = load_model(CONFIG_PATH, CHECKPOINT_PATH)
 
-if FP16_INFERENCE:
-    image = image.half()
-    model = model.half()
+# if FP16_INFERENCE:
+#     image = image.half()
+#     model = model.half()
 
 boxes, logits, phrases = predict(
     model=model,
@@ -27,5 +27,6 @@ boxes, logits, phrases = predict(
     device=DEVICE,
 )
 
-annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
+annotated_frame = annotate(image_source=image_source,
+                           boxes=boxes, logits=logits, phrases=phrases)
 cv2.imwrite("annotated_image.jpg", annotated_frame)
