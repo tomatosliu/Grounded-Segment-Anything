@@ -154,12 +154,10 @@ class CocoWriter:
 
 def annotate_one_directory(image_dir):
     assert os.path.exists(image_dir)
-    vis_dir = image_dir + '_vis'
-    label_dir = os.path.join(image_dir, 'label')
-    imglist_txt = os.path.join(label_dir, "all.txt")
-    anno_json = os.path.join(label_dir, "annotations.json")
+    vis_dir = os.path.join('/tmp', os.path.basename(image_dir) + '_vis')
+    imglist_txt = os.path.join(image_dir, "all.txt")
+    anno_json = os.path.join(image_dir, "annotations.json")
     os.makedirs(vis_dir, exist_ok=True)
-    os.makedirs(label_dir, exist_ok=True)
 
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -216,7 +214,6 @@ def annotate_one_directory(image_dir):
         detections.xyxy = detections.xyxy[nms_idx]
         detections.confidence = detections.confidence[nms_idx]
         detections.class_id = detections.class_id[nms_idx]
-
 
         # Prompting SAM with detected boxes
 
@@ -292,11 +289,27 @@ def annotate_one_directory(image_dir):
     imglist_f.close()
 
 
+def find_directories_with_jpg(root_dir):
+    directories_with_jpg = set()
+    # Walk through all directories and files in root_dir
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        # Check if any '.jpg' files are in the current directory
+        if any(fname.endswith('.jpg') for fname in filenames) \
+            and not any(fname.endswith('.mcap.jpg') for fname in filenames) \
+                and not any(fname.endswith('_rosbag.jpg') for fname in filenames):
+            directories_with_jpg.add(dirpath)
+    return directories_with_jpg
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('img_dir', nargs='+')
     args = parser.parse_args()
     print('process:\n', args.img_dir)
-    for d in args.img_dir:
-        print("labeling", d)
-        annotate_one_directory(d)
+
+    # Specify the root directory to search
+    for big_d in args.img_dir:
+        jpg_directories = find_directories_with_jpg(big_d)
+        for d in jpg_directories:
+            print("labeling", d)
+            annotate_one_directory(d)
