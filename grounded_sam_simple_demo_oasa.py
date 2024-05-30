@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 import argparse
+from tqdm import tqdm
 
 import torch
 import torchvision
@@ -32,7 +33,7 @@ CLASSES = ['grass', 'road', 'tree', 'person',
            'net', 'pillow', 'platform', 'playingfield', 'railroad', 'river', 'roof', 'sand', 'sea',
            'shelf', 'snow', 'stairs', 'tent', 'towel',
            'water', 'window', 'ceiling', 'sky', 'cabinet',
-           'mountain', 'dirt', 'paper', 'food', 'rug']
+           'mountain', 'dirt', 'paper', 'food', 'rug', 'trampoline', 'pipes']
 
 COLOR_LOOKUP = np.full((len(CLASSES), 3), (255, 0, 0), dtype=np.uint8)
 COLOR_LOOKUP[:4, :] = [[0, 255, 0], [0, 0, 255], [0, 125, 0], [125, 0, 0]]
@@ -44,7 +45,7 @@ OASA_CLASSES = ['others', 'grass', 'road', 'tree', 'person', 'base', 'treeroot',
 def ClassToOasaLabelID(cls):
     GRASS_CLASSES = {'grass'}
     ROAD_CLASSES = {'road', 'floor', 'pavement',
-                    'bridge', 'gravel', 'sand', 'dirt', 'rug'}
+                    'gravel', 'sand', 'dirt', 'rug'}
     TREE_CLASSES = {'tree', 'shrub', 'potted plant', 'flower'}
     PERSON_CLASSES = {'person', 'cat', 'dog'}
     BASE_CLASSES = {'base'}
@@ -153,12 +154,10 @@ class CocoWriter:
 
 def annotate_one_directory(image_dir):
     assert os.path.exists(image_dir)
-    output_dir = image_dir + '_output'
     vis_dir = image_dir + '_vis'
     label_dir = os.path.join(image_dir, 'label')
     imglist_txt = os.path.join(label_dir, "all.txt")
     anno_json = os.path.join(label_dir, "annotations.json")
-    os.makedirs(output_dir, exist_ok=True)
     os.makedirs(vis_dir, exist_ok=True)
     os.makedirs(label_dir, exist_ok=True)
 
@@ -183,13 +182,13 @@ def annotate_one_directory(image_dir):
     sam_predictor = SamPredictor(sam)
 
     # Predict classes and hyper-param for GroundingDINO
-    BOX_THRESHOLD = 0.25
-    TEXT_THRESHOLD = 0.25
-    NMS_THRESHOLD = 0.8
+    BOX_THRESHOLD = 0.2
+    TEXT_THRESHOLD = 0.2
+    NMS_THRESHOLD = 0.7
 
     coco = CocoWriter(OASA_CLASSES)
     imglist_f = open(imglist_txt, 'w')
-    for img_path in os.listdir(image_dir):
+    for img_path in tqdm(os.listdir(image_dir)):
         if not img_path.endswith('.jpg'):
             continue
         imglist_f.write(img_path + '\n')
@@ -208,7 +207,6 @@ def annotate_one_directory(image_dir):
         )
 
         # NMS post process
-        print(f"Before NMS: {len(detections.xyxy)} boxes")
         nms_idx = torchvision.ops.nms(
             torch.from_numpy(detections.xyxy),
             torch.from_numpy(detections.confidence),
@@ -216,10 +214,9 @@ def annotate_one_directory(image_dir):
         ).numpy().tolist()
 
         detections.xyxy = detections.xyxy[nms_idx]
-        detections.confidence = detections.confidenSamAutomaticMaskGeneratorce[nms_idx]
+        detections.confidence = detections.confidence[nms_idx]
         detections.class_id = detections.class_id[nms_idx]
 
-        print(f"After NMS: {len(detections.xyxy)} boxes")
 
         # Prompting SAM with detected boxes
 
@@ -250,12 +247,16 @@ def annotate_one_directory(image_dir):
             detections.mask[i][camera_mask == 0] = 0
 
         occupied_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        for oasa_ind in range(len(OASA_CLASSES)):
+        # Other as the lowest priority
+        for oasa_ind in list(range(1, len(OASA_CLASSES))) + [0]:
             for mask_ind, (xyxy, mask, confidence, class_id, tracker_id, _) in enumerate(detections):
                 if (ClassToOasaLabelID(CLASSES[class_id])) == oasa_ind:
-                    mask[occupied_mask == 1] = 0
-                    occupied_mask[mask == 1] = 1
+                    mask[occupied_mask != 0] = 0
+                    occupied_mask[mask != 0] = 1
                     detections.mask[mask_ind] = mask
+        # for mask_ind, (xyxy, mask, confidence, class_id, tracker_id, _) in enumerate(detections):
+        #     if class_id != 0:
+        #         detections.mask[mask_ind] = 0
 
         # Visualization
         colors = np.zeros((len(detections.xyxy), 3), dtype=np.uint8)
@@ -293,6 +294,9 @@ def annotate_one_directory(image_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('img_dir')
+    parser.add_argument('img_dir', nargs='+')
     args = parser.parse_args()
-    annotate_one_directory(args.img_dir)
+    print('process:\n', args.img_dir)
+    for d in args.img_dir:
+        print("labeling", d)
+        annotate_one_directory(d)
