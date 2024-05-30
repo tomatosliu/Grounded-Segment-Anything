@@ -305,6 +305,6 @@ if __name__ == '__main__':
     # Specify the root directory to search
     for big_d in args.img_dir:
         jpg_directories = find_directories_with_jpg(big_d)
-        for d in jpg_directories:
+        for d in tqdm(jpg_directories):
             print("labeling", d)
             annotate_one_directory(d)
