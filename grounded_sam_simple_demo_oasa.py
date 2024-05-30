@@ -8,7 +8,7 @@ import torchvision
 import supervision as sv
 
 from groundingdino.util.inference import Model
-from segment_anything import sam_model_registry, SamPredictor
+from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
 
 import cv2
 import numpy as np
@@ -16,7 +16,7 @@ import json
 from pycocotools import mask as maskUtils
 from typing import Union
 
-CLASSES = ['grass', 'road', 'tree', 'person', 'treeroot', 'leaf',
+CLASSES = ['grass', 'road', 'tree', 'person',
            'building', 'shrub', 'bicycle', 'car', 'cat', 'dog',
            'fence', 'wall', 'floor', 'pavement', 'rock', 'table', 'chair',
            'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant',
@@ -33,6 +33,9 @@ CLASSES = ['grass', 'road', 'tree', 'person', 'treeroot', 'leaf',
            'shelf', 'snow', 'stairs', 'tent', 'towel',
            'water', 'window', 'ceiling', 'sky', 'cabinet',
            'mountain', 'dirt', 'paper', 'food', 'rug']
+
+COLOR_LOOKUP = np.full((len(CLASSES), 3), (255, 0, 0), dtype=np.uint8)
+COLOR_LOOKUP[:4, :] = [[0, 255, 0], [0, 0, 255], [0, 125, 0], [125, 0, 0]]
 
 OASA_CLASSES = ['others', 'grass', 'road', 'tree', 'person', 'base', 'treeroot', 'leaf', 'sem_08',
                 'sem_09', 'sem_10', 'sem_11', 'sem_12', 'sem_13', 'sem_14', 'sem_15', 'sem_16', 'sem_17', 'sem_18']
@@ -130,6 +133,8 @@ class CocoWriter:
         rle = maskUtils.encode(np.asfortranarray(binary_mask))
         rle['counts'] = rle['counts'].decode()
         y, x = np.nonzero(binary_mask)
+        if len(x) == 0 or len(y) == 0:
+            return
         anno = {}
         anno['id'] = len(self.annotations['annotations'])
         anno['area'] = len(x)
@@ -191,14 +196,8 @@ def annotate_one_directory(image_dir):
 
         # load image
         image = cv2.imread(os.path.join(image_dir, img_path))
-        image = cv2.resize(
-            image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
-
-        print(image.shape)
-        camera_mask = np.zeros(image.shape[:2], np.uint8)
-        print(camera_mask.shape)
-        cv2.circle(
-            camera_mask, (image.shape[1]//2, image.shape[0]//2), image.shape[0]//2, 255, -1)
+        # image = cv2.resize(
+        #     image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
 
         # detect objects
         detections = grounding_dino_model.predict_with_classes(
@@ -217,7 +216,7 @@ def annotate_one_directory(image_dir):
         ).numpy().tolist()
 
         detections.xyxy = detections.xyxy[nms_idx]
-        detections.confidence = detections.confidence[nms_idx]
+        detections.confidence = detections.confidenSamAutomaticMaskGeneratorce[nms_idx]
         detections.class_id = detections.class_id[nms_idx]
 
         print(f"After NMS: {len(detections.xyxy)} boxes")
@@ -230,7 +229,7 @@ def annotate_one_directory(image_dir):
             for box in xyxy:
                 masks, scores, logits = sam_predictor.predict(
                     box=box,
-                    multimask_output=True
+                    multimask_output=False
                 )
                 index = np.argmax(scores)
                 result_masks.append(masks[index])
@@ -242,13 +241,32 @@ def annotate_one_directory(image_dir):
             image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
             xyxy=detections.xyxy
         )
-        for i, m in enumerate(detections.mask):
-            detections.mask[i][camera_mask == 0] = 255 
 
-        # annotate image with detections
-        box_annotator = sv.BoxAnnotator(
-            thickness=1, text_scale=0.3, text_padding=5)
+        # Mask fisheye edge
+        camera_mask = np.zeros(image.shape[:2], np.uint8)
+        cv2.circle(
+            camera_mask, (image.shape[1]//2, image.shape[0]//2), image.shape[1]//2-10, 255, -1)
+        for i, m in enumerate(detections.mask):
+            detections.mask[i][camera_mask == 0] = 0
+
+        occupied_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        for oasa_ind in range(len(OASA_CLASSES)):
+            for mask_ind, (xyxy, mask, confidence, class_id, tracker_id, _) in enumerate(detections):
+                if (ClassToOasaLabelID(CLASSES[class_id])) == oasa_ind:
+                    mask[occupied_mask == 1] = 0
+                    occupied_mask[mask == 1] = 1
+                    detections.mask[mask_ind] = mask
+
+        # Visualization
+        colors = np.zeros((len(detections.xyxy), 3), dtype=np.uint8)
+        for ind, class_id in enumerate(detections.class_id):
+            colors[ind] = COLOR_LOOKUP[class_id]
+
+        box_annotator = sv.BoundingBoxAnnotator(
+            thickness=1)
         mask_annotator = sv.MaskAnnotator()
+        label_annotator = sv.LabelAnnotator(
+            text_scale=0.3, text_padding=3, text_position=sv.Position.CENTER)
         labels = [
             f"{CLASSES[class_id]} {confidence:0.2f}"
             for _, _, confidence, class_id, _, _
@@ -256,6 +274,8 @@ def annotate_one_directory(image_dir):
         annotated_image = mask_annotator.annotate(
             scene=image.copy(), detections=detections)
         annotated_image = box_annotator.annotate(
+            scene=annotated_image, detections=detections)
+        annotated_image = label_annotator.annotate(
             scene=annotated_image, detections=detections, labels=labels)
 
         # save the annotated grounded-sam image
