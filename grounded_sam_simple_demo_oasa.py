@@ -42,6 +42,32 @@ OASA_CLASSES = ['others', 'grass', 'road', 'tree', 'person', 'base', 'treeroot',
                 'sem_09', 'sem_10', 'sem_11', 'sem_12', 'sem_13', 'sem_14', 'sem_15', 'sem_16', 'sem_17', 'sem_18']
 
 
+# GroundingDINO config and checkpoint
+GROUNDING_DINO_CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+GROUNDING_DINO_CHECKPOINT_PATH = "./groundingdino_swint_ogc.pth"
+
+# Segment-Anything checkpoint
+SAM_ENCODER_VERSION = "vit_h"
+SAM_CHECKPOINT_PATH = "./sam_vit_h_4b8939.pth"
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Building GroundingDINO inference model
+grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH,
+                             model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
+
+# Building SAM Model and SAM Predictor
+sam = sam_model_registry[SAM_ENCODER_VERSION](
+    checkpoint=SAM_CHECKPOINT_PATH)
+sam.to(device=DEVICE)
+sam_predictor = SamPredictor(sam)
+
+# Predict classes and hyper-param for GroundingDINO
+BOX_THRESHOLD = 0.2
+TEXT_THRESHOLD = 0.2
+NMS_THRESHOLD = 0.7
+
+
 def ClassToOasaLabelID(cls):
     GRASS_CLASSES = {'grass'}
     ROAD_CLASSES = {'road', 'floor', 'pavement',
@@ -159,31 +185,6 @@ def annotate_one_directory(image_dir):
     anno_json = os.path.join(image_dir, "annotations.json")
     os.makedirs(vis_dir, exist_ok=True)
 
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    # GroundingDINO config and checkpoint
-    GROUNDING_DINO_CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-    GROUNDING_DINO_CHECKPOINT_PATH = "./groundingdino_swint_ogc.pth"
-
-    # Segment-Anything checkpoint
-    SAM_ENCODER_VERSION = "vit_h"
-    SAM_CHECKPOINT_PATH = "./sam_vit_h_4b8939.pth"
-
-    # Building GroundingDINO inference model
-    grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH,
-                                 model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
-
-    # Building SAM Model and SAM Predictor
-    sam = sam_model_registry[SAM_ENCODER_VERSION](
-        checkpoint=SAM_CHECKPOINT_PATH)
-    sam.to(device=DEVICE)
-    sam_predictor = SamPredictor(sam)
-
-    # Predict classes and hyper-param for GroundingDINO
-    BOX_THRESHOLD = 0.2
-    TEXT_THRESHOLD = 0.2
-    NMS_THRESHOLD = 0.7
-
     coco = CocoWriter(OASA_CLASSES)
     imglist_f = open(imglist_txt, 'w')
     for img_path in tqdm(os.listdir(image_dir)):
@@ -193,8 +194,6 @@ def annotate_one_directory(image_dir):
 
         # load image
         image = cv2.imread(os.path.join(image_dir, img_path))
-        # image = cv2.resize(
-        #     image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
 
         # detect objects
         detections = grounding_dino_model.predict_with_classes(
@@ -216,7 +215,6 @@ def annotate_one_directory(image_dir):
         detections.class_id = detections.class_id[nms_idx]
 
         # Prompting SAM with detected boxes
-
         def segment(sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
             sam_predictor.set_image(image)
             result_masks = []
@@ -251,9 +249,6 @@ def annotate_one_directory(image_dir):
                     mask[occupied_mask != 0] = 0
                     occupied_mask[mask != 0] = 1
                     detections.mask[mask_ind] = mask
-        # for mask_ind, (xyxy, mask, confidence, class_id, tracker_id, _) in enumerate(detections):
-        #     if class_id != 0:
-        #         detections.mask[mask_ind] = 0
 
         # Visualization
         colors = np.zeros((len(detections.xyxy), 3), dtype=np.uint8)
