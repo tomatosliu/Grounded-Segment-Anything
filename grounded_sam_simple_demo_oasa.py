@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import datetime
 import argparse
 from tqdm import tqdm
 
@@ -17,7 +18,7 @@ import json
 from pycocotools import mask as maskUtils
 from typing import Union
 
-CLASSES = ['grass', 'road', 'tree', 'person',
+CLASSES = ['grass', 'pipes', 'road', 'tree', 'person',
            'building', 'shrub', 'bicycle', 'car', 'cat', 'dog',
            'fence', 'wall', 'floor', 'pavement', 'rock', 'table', 'chair',
            'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant',
@@ -33,10 +34,22 @@ CLASSES = ['grass', 'road', 'tree', 'person',
            'net', 'pillow', 'platform', 'playingfield', 'railroad', 'river', 'roof', 'sand', 'sea',
            'shelf', 'snow', 'stairs', 'tent', 'towel',
            'water', 'window', 'ceiling', 'sky', 'cabinet',
-           'mountain', 'dirt', 'paper', 'food', 'rug', 'trampoline', 'pipes']
+           'mountain', 'dirt', 'paper', 'food', 'rug', 'trampoline']
 
 COLOR_LOOKUP = np.full((len(CLASSES), 3), (255, 0, 0), dtype=np.uint8)
 COLOR_LOOKUP[:4, :] = [[0, 255, 0], [0, 0, 255], [0, 125, 0], [125, 0, 0]]
+CAMERA_MASK = [cv2.imread('oasa_assets/new_camera_mask.png', cv2.IMREAD_GRAYSCALE),
+               cv2.imread('oasa_assets/old_camera_mask.png', cv2.IMREAD_GRAYSCALE)]
+
+
+def get_camera_mask(img_fn):
+    mod_time = os.path.getmtime(img_fn)
+    readable_time = datetime.datetime.fromtimestamp(mod_time)
+    if readable_time.year >= 2024 and readable_time.month >= 5:
+        return CAMERA_MASK[0]
+    else:
+        return CAMERA_MASK[1]
+
 
 OASA_CLASSES = ['others', 'grass', 'road', 'tree', 'person', 'base', 'treeroot', 'leaf', 'sem_08',
                 'sem_09', 'sem_10', 'sem_11', 'sem_12', 'sem_13', 'sem_14', 'sem_15', 'sem_16', 'sem_17', 'sem_18']
@@ -183,9 +196,11 @@ def annotate_one_directory(image_dir):
     vis_dir = os.path.join('/tmp', os.path.basename(image_dir) + '_vis')
     imglist_txt = os.path.join(image_dir, "all.txt")
     anno_json = os.path.join(image_dir, "annotations.json")
+    sam_anno_json = os.path.join(image_dir, "sam_annotations.json")
     os.makedirs(vis_dir, exist_ok=True)
 
     coco = CocoWriter(OASA_CLASSES)
+    sam_coco = CocoWriter(CLASSES)
     imglist_f = open(imglist_txt, 'w')
     for img_path in tqdm(os.listdir(image_dir)):
         if not img_path.endswith('.jpg'):
@@ -193,7 +208,8 @@ def annotate_one_directory(image_dir):
         imglist_f.write(img_path + '\n')
 
         # load image
-        image = cv2.imread(os.path.join(image_dir, img_path))
+        image_path = os.path.join(image_dir, img_path)
+        image = cv2.imread(image_path)
 
         # detect objects
         detections = grounding_dino_model.predict_with_classes(
@@ -235,9 +251,9 @@ def annotate_one_directory(image_dir):
         )
 
         # Mask fisheye edge
-        camera_mask = np.zeros(image.shape[:2], np.uint8)
-        cv2.circle(
-            camera_mask, (image.shape[1]//2, image.shape[0]//2), image.shape[1]//2-10, 255, -1)
+        camera_mask = get_camera_mask(image_path)
+        camera_mask = cv2.resize(
+            camera_mask, (image.shape[1], image.shape[0]), cv2.INTER_NEAREST)
         for i, m in enumerate(detections.mask):
             detections.mask[i][camera_mask == 0] = 0
 
@@ -277,10 +293,14 @@ def annotate_one_directory(image_dir):
         # Write coco-format
         coco.add_image(
             img_path, annotated_image.shape[1], annotated_image.shape[0])
+        sam_coco.add_image(
+            img_path, annotated_image.shape[1], annotated_image.shape[0])
         for xyxy, mask, confidence, class_id, tracker_id, _ in detections:
             coco.add_anno_mask(
                 img_path, mask, ClassToOasaLabelID(CLASSES[class_id]))
+            sam_coco.add_anno_mask(img_path, mask, class_id)
         coco.save(anno_json)
+        sam_coco.save(sam_anno_json)
     imglist_f.close()
 
 
