@@ -1,0 +1,36 @@
+{
+    "grass": [
+        "grass",
+        "lawn",
+        "grassland",
+        "grassy"
+    ],
+    "road": [
+        "road",
+        "roadside",
+        "asphalt road",
+        "floor",
+        "cement",
+        "ramp",
+        "walk",
+        "pavement",
+        "mulch"
+    ],
+    "tree": [
+        "tree",
+        "shrub",
+        "plant",
+        "houseplant"
+    ],
+    "person": [
+        "person",
+        "man",
+        "woman",
+        "cat",
+        "dog"
+    ],
+    "treeroot": [],
+    "leaf": [
+        "leaf"
+    ]
+}

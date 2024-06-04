@@ -21,3 +21,4 @@ yapf
 nltk
 fairscale
 litellm
+git+https://github.com/xinyu1205/recognize-anything.git

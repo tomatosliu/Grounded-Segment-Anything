@@ -1,0 +1,8 @@
+grass
+pipe
+lawn
+person
+road
+floor
+tree
+shrub
